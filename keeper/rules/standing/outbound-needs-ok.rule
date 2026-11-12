@@ -1,6 +1,7 @@
 rule "Outbound action without Al's OK"
 metadata:
     severity = "high"
+    action = "ask"
     description = "The AI called a tool that sends something outside (push, upload, publish, email, post, webhook) and no user message in this conversation approved it."
     plain = "The AI tried to send something out without your OK."
 strings:

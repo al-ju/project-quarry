@@ -39,6 +39,8 @@ class BrokenRule:
     description: str
     plain: str
     where: list[str] = field(default_factory=list)
+    # "deny" stops the step. "ask" lets Al decide (Allow/Deny) where the host supports it.
+    action: str = "deny"
 
 
 @dataclass
@@ -164,6 +166,7 @@ def check(root: Path, subject_name: str, conversation: Any) -> CheckReport:
                 description=str(metadata.get("description", "")),
                 plain=str(metadata.get("plain", "")),
                 where=_where(evidence.get(name)),
+                action="ask" if str(metadata.get("action", "")).lower() == "ask" else "deny",
             )
         )
     return CheckReport(
@@ -185,7 +188,7 @@ def check_file(root: Path, subject_name: str, conversation_path: Path) -> CheckR
     return check(root, subject_name, conversation)
 
 
-def write_log(root: Path, report: CheckReport) -> Path:
+def write_log(root: Path, report: CheckReport, source: str = "") -> Path:
     """Append one line per check to log/<date>.md."""
 
     log_dir = Path(root).expanduser().resolve() / "log"
@@ -196,7 +199,10 @@ def write_log(root: Path, report: CheckReport) -> Path:
         if report.stop_kind == "rule"
         else "; ".join(report.issues)
     )
-    line = f"- {report.checked_at} · {report.subject} · {report.verdict}"
+    line = f"- {report.checked_at} · {report.subject}"
+    if source:
+        line += f" · {source}"
+    line += f" · {report.verdict}"
     if report.verdict == "STOP":
         line += f" ({report.stop_kind}: {detail})"
     with path.open("a", encoding="utf-8") as handle:
