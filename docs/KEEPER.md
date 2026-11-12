@@ -1,4 +1,4 @@
-# The Keeper (phases 1 and 2)
+# The Keeper
 
 The Keeper is a guard and organizing system for AI agents, built on the Quarry rule engine
 in this repository. It gives every subject its own desk (facts, rules, checks, references),
@@ -72,6 +72,42 @@ keeper job reject ~/keeper art 2026-11-06-hero-walk-cycle --why "Don't redesign 
 keeper job accept ~/keeper art 2026-11-06-hero-walk-cycle --note "Matches the reference"
 keeper ghost ~/keeper sprite-walk-cycle
 ```
+
+## Hooks: guarding SPARCO (Claude Code) and SPARC (dsh)
+
+`keeper hook` answers Claude Code style hooks. Claude Code runs them natively (SPARCO).
+dsh runs the same hook file through its `dsh-hooks-claude-code` add-on (SPARC). Each
+machine calls its own Keeper. The Keeper never goes online, so a hook adds no way out.
+
+| Hook | What the Keeper does | Answer |
+|---|---|---|
+| `PreToolUse` | Checks the tool call before it runs. | allow, **ask** (outbound tools without an OK earlier in the chat), or **block** with the alert |
+| `PostToolUse` | Checks what the tool sent back (orders hidden in files or pages) and records the step in the subject's active job. | allow or block |
+| `Stop` | Checks the finished reply (timestamp, In simple terms, next step, secrets). Sends a reply back **once** to be fixed, never in a loop. If the host sends no reply text (dsh today), it logs "SKIPPED" and allows. | allow or block |
+| `SubagentStart` | Hands the helper its subject's `RULES.md`. | extra context |
+
+- **Fail closed:** any problem inside the Keeper is a block. Hosts only block on exit
+  code 2, so always call it through `keeper/keeper-hook.sh`, which turns a crash
+  (Keeper missing, Python broken) into exit 2 with an alert.
+- **Al's earlier OK counts:** the hook reads Al's messages from the transcript (Claude
+  Code), so "approved" earlier in the chat lets an outbound tool through.
+- **Active job:** `keeper job start` makes that job the subject's active job, so every
+  tool step is recorded automatically until it's accepted.
+- **Log:** every hook answer adds a line to `log/<date>.md`, naming the hook.
+
+Make the hook file for one machine:
+
+```bash
+keeper hooks-file --root ~/sparc-vault/keeper --subject sparc \
+    --wrapper /full/path/to/keeper-hook.sh > ~/sparc-vault/keeper/keeper-hooks.json
+```
+
+- **SPARCO (Claude Code):** copy its `hooks` block into the Claude Code settings file.
+- **SPARC (dsh):** add the add-on to a test preset's `agent.cordis.yml`:
+  ```yaml
+  - dsh-hooks-claude-code:
+      configPath: ~/sparc-vault/keeper/keeper-hooks.json
+  ```
 
 ## Offline guarantees
 

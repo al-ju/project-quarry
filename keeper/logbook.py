@@ -32,6 +32,7 @@ import yaml
 from keeper.guard import rule_files_for
 from keeper.layout import LayoutError, Subject, load_subject, require_root
 
+ACTIVE_JOB = "ACTIVE_JOB"
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _MAX_FIELD = 2000
 
@@ -173,10 +174,21 @@ def start_job(
     )
     job.path.mkdir(parents=True)
     job.save()
+    (subject.path / ACTIVE_JOB).write_text(job.id + "\n", encoding="utf-8")
     _append(job, {"event": "start", "note": title})
     if new_direction:
         _append(job, {"event": "new-direction", "note": new_direction})
     return job, ghost_lap(root, kind, keywords=job.keywords, new_direction=new_direction)
+
+
+def active_job(root: Path, subject_name: str) -> str | None:
+    """The job hooks record steps into: the subject's most recently started open job."""
+
+    pointer = load_subject(root, subject_name).path / ACTIVE_JOB
+    if not pointer.is_file():
+        return None
+    job_id = pointer.read_text(encoding="utf-8").strip()
+    return job_id if SLUG.match(job_id) else None
 
 
 def load_job(root: Path, subject_name: str, job_id: str) -> Job:
@@ -291,6 +303,8 @@ def accept(
     _append(job, {"event": "accepted", "note": note})
     job.status = "accepted"
     job.save()
+    if active_job(root, subject_name) == job.id:
+        (subject.path / ACTIVE_JOB).unlink()
     success = job.path / "SUCCESS.md"
     success.write_text(_success_md(root, subject, job, note), encoding="utf-8")
 

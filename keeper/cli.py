@@ -9,6 +9,8 @@
     keeper job step|record|reject|accept <folder> <subject> <job> [...]
     keeper ghost <folder> <kind>
     keeper rejections list|forget <folder> [...]
+    keeper hook pre-tool|post-tool|stop|subagent-start --root FOLDER --subject NAME  (stdin)
+    keeper hooks-file --root FOLDER --subject NAME --wrapper /path/to/keeper-hook.sh
 
 Exit codes for `check`: 0 PASS, 1 STOP (a rule broke), 2 STOP (the check could not finish).
 Every other command exits 0 on success and 2 on any error.
@@ -18,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -124,6 +128,19 @@ def main(argv: list[str] | None = None) -> int:
     forget.add_argument("files", nargs="*", help="only these files; default is the whole folder")
     forget.add_argument("--yes", action="store_true", help="skip the typed confirmation")
 
+    hook = commands.add_parser("hook", help="answer a Claude Code style hook (reads stdin)")
+    hook.add_argument("event", choices=["pre-tool", "post-tool", "stop", "subagent-start"])
+    hook.add_argument("--root", type=Path, default=None, help="Keeper folder (or $KEEPER_ROOT)")
+    hook.add_argument("--subject", required=True)
+
+    hooks_file = commands.add_parser("hooks-file", help="print a hooks.json for Claude Code or dsh")
+    hooks_file.add_argument("--root", type=Path, required=True)
+    hooks_file.add_argument("--subject", required=True)
+    hooks_file.add_argument(
+        "--wrapper", required=True, help="absolute path of keeper-hook.sh on that machine"
+    )
+    hooks_file.add_argument("--timeout", type=int, default=30, help="seconds per hook")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -162,6 +179,10 @@ def main(argv: list[str] | None = None) -> int:
             print(logbook.ghost_lap(args.folder, args.kind, keywords=args.keywords).to_text())
         elif args.command == "rejections":
             return _rejections(args)
+        elif args.command == "hook":
+            return _hook(args)
+        elif args.command == "hooks-file":
+            print(json.dumps(hooks_config(args), indent=2))
     except (LayoutError, logbook.LogbookError) as error:
         print(
             f"ALERT: {error}\n\nIn simple terms: the Keeper couldn't find or set up what you asked for.",
@@ -241,6 +262,44 @@ def _rejections(args: argparse.Namespace) -> int:
     removed = logbook.forget_rejections(args.folder, args.session_folder, args.files)
     print(f"Deleted {len(removed)} rejection file(s).")
     return 0
+
+
+def _hook(args: argparse.Namespace) -> int:
+    from keeper.hook import BLOCK, run_hook
+
+    root = args.root or (Path(os.environ["KEEPER_ROOT"]) if os.environ.get("KEEPER_ROOT") else None)
+    if root is None:
+        print(
+            "ALERT: keeper hook needs --root or $KEEPER_ROOT, so this step is blocked.",
+            file=sys.stderr,
+        )
+        return BLOCK
+    answer = run_hook(args.event, root, args.subject, sys.stdin.read())
+    if answer.stdout:
+        print(answer.stdout)
+    if answer.stderr:
+        print(answer.stderr, file=sys.stderr)
+    return answer.exit_code
+
+
+def hooks_config(args: argparse.Namespace) -> dict:
+    """One hooks.json that works in Claude Code and in dsh's dsh-hooks-claude-code bridge."""
+
+    def entry(event: str) -> dict:
+        command = (
+            f"{shlex.quote(args.wrapper)} {event} --root {shlex.quote(str(args.root))} "
+            f"--subject {shlex.quote(args.subject)}"
+        )
+        return {"type": "command", "command": command, "timeout": args.timeout}
+
+    return {
+        "hooks": {
+            "PreToolUse": [{"matcher": "*", "hooks": [entry("pre-tool")]}],
+            "PostToolUse": [{"matcher": "*", "hooks": [entry("post-tool")]}],
+            "Stop": [{"hooks": [entry("stop")]}],
+            "SubagentStart": [{"matcher": "*", "hooks": [entry("subagent-start")]}],
+        }
+    }
 
 
 if __name__ == "__main__":
